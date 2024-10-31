@@ -117,20 +117,14 @@ def patched_conform(elem: t.Any, property_schema: dict) -> t.Any:
         epoch = datetime.datetime.fromtimestamp(0, datetime.timezone.utc)
         timedelta_from_epoch = epoch + elem
         if timedelta_from_epoch.tzinfo is None:
-            timedelta_from_epoch = timedelta_from_epoch.replace(
-                tzinfo=datetime.timezone.utc
-            )
+            timedelta_from_epoch = timedelta_from_epoch.replace(tzinfo=datetime.timezone.utc)
         return timedelta_from_epoch.isoformat()
     if isinstance(elem, datetime.time):  # copied
         return str(elem)
     if isinstance(elem, bytes):  # copied, modified to import is_boolean_type
         # for BIT value, treat 0 as False and anything else as True
         # Will only due this for booleans, not `bytea` data.
-        return (
-            elem != b"\x00"
-            if singer_sdk.helpers._typing.is_boolean_type(property_schema)
-            else elem.hex()
-        )
+        return elem != b"\x00" if singer_sdk.helpers._typing.is_boolean_type(property_schema) else elem.hex()
     return elem
 
 
@@ -159,9 +153,7 @@ class PostgresConnector(SQLConnector):
         # See https://www.psycopg.org/psycopg3/docs/advanced/adapt.html#example-handling-infinity-date # noqa: E501
         # For more information
         if config is not None and config["dates_as_string"] is True:
-            string_dates = psycopg2.extensions.new_type(
-                (1082, 1114, 1184), "STRING_DATES", psycopg2.STRING
-            )
+            string_dates = psycopg2.extensions.new_type((1082, 1114, 1184), "STRING_DATES", psycopg2.STRING)
             string_date_arrays = psycopg2.extensions.new_array_type(
                 (1182, 1115, 1188), "STRING_DATE_ARRAYS[]", psycopg2.STRING
             )
@@ -231,9 +223,7 @@ class PostgresStream(SQLStream):
         if self.replication_key:
             replication_key_col = table.columns[self.replication_key]
             order_by = (
-                sa.nulls_first(replication_key_col.asc())
-                if self.supports_nulls_first
-                else replication_key_col.asc()
+                sa.nulls_first(replication_key_col.asc()) if self.supports_nulls_first else replication_key_col.asc()
             )
             query = query.order_by(order_by)
 
@@ -367,20 +357,12 @@ class PostgresLogBasedStream(SQLStream):
             else:
                 timeout = (
                     status_interval
-                    - (
-                        datetime.datetime.now()
-                        - logical_replication_cursor.feedback_timestamp
-                    ).total_seconds()
+                    - (datetime.datetime.now() - logical_replication_cursor.feedback_timestamp).total_seconds()
                 )
                 try:
                     # If the timeout has passed and the cursor still has no new
                     # messages, the sync has completed.
-                    if (
-                        select.select(
-                            [logical_replication_cursor], [], [], max(0, timeout)
-                        )[0]
-                        == []
-                    ):
+                    if select.select([logical_replication_cursor], [], [], max(0, timeout))[0] == []:
                         break
                 except InterruptedError:
                     pass
@@ -414,20 +396,11 @@ class PostgresLogBasedStream(SQLStream):
         elif message_payload["action"] in delete_actions:
             for column in message_payload["identity"]:
                 row.update({column["name"]: self._parse_column_value(column, cursor)})
-            row.update(
-                {
-                    "_sdc_deleted_at": datetime.datetime.utcnow().strftime(
-                        r"%Y-%m-%dT%H:%M:%SZ"
-                    )
-                }
-            )
+            row.update({"_sdc_deleted_at": datetime.datetime.utcnow().strftime(r"%Y-%m-%dT%H:%M:%SZ")})
             row.update({"_sdc_lsn": message.data_start})
         elif message_payload["action"] in truncate_actions:
             self.logger.debug(
-                (
-                    "A message payload of %s (corresponding to a truncate action) "
-                    "could not be processed."
-                ),
+                ("A message payload of %s (corresponding to a truncate action) " "could not be processed."),
                 message.payload,
             )
         elif message_payload["action"] in transaction_actions:
@@ -440,10 +413,7 @@ class PostgresLogBasedStream(SQLStream):
             )
         else:
             raise RuntimeError(
-                (
-                    "A message payload of %s (corresponding to an unknown action type) "
-                    "could not be processed."
-                ),
+                ("A message payload of %s (corresponding to an unknown action type) " "could not be processed."),
                 message.payload,
             )
 
@@ -453,8 +423,17 @@ class PostgresLogBasedStream(SQLStream):
         # When using log based replication, the wal2json output for columns of
         # array types returns a string encoded in sql format, e.g. '{a,b}'
         # https://github.com/eulerto/wal2json/issues/221#issuecomment-1025143441
-        if column["type"] == "text[]":
-            return psycopg2.extensions.STRINGARRAY(column["value"], cursor)
+        schema_type = self.schema.get("properties", {}).get(column["name"], {}).get("type", [])
+        if isinstance(schema_type, list):
+            schema_type = set(schema_type)
+            schema_type.discard("null")
+            schema_type = list(schema_type)
+        else:
+            schema_type = [schema_type]
+
+        if column["type"] == "text[]" or ("array" in schema_type and len(schema_type) == 1):
+            new_value = psycopg2.extensions.STRINGARRAY(column["value"], cursor)
+            return new_value
 
         return column["value"]
 
