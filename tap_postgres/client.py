@@ -332,7 +332,7 @@ class PostgresLogBasedStream(SQLStream):
         logical_replication_cursor.send_feedback(flush_lsn=start_lsn)
 
         # get the slot name from the configuration or use the default value
-        replication_slot_name = self.config.get("replication_slot_name", "tappostgres")
+        replication_slot_name = self.config.get("replication_slot_name", "nekt")
 
         logical_replication_cursor.start_replication(
             slot_name=replication_slot_name,  # use slot name
