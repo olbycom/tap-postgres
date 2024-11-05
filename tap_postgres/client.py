@@ -323,7 +323,7 @@ class PostgresLogBasedStream(SQLStream):
         logical_replication_cursor.send_feedback(flush_lsn=start_lsn)
 
         logical_replication_cursor.start_replication(
-            slot_name="tappostgres",
+            slot_name="nekt",
             decode=True,
             start_lsn=start_lsn,
             status_interval=status_interval,
