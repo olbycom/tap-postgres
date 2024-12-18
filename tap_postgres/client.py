@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime
 import functools
 import json
+import logging
 import select
 import typing as t
 from types import MappingProxyType
@@ -30,6 +31,10 @@ if t.TYPE_CHECKING:
     from singer_sdk.helpers.types import Context
     from sqlalchemy.engine import Engine
     from sqlalchemy.engine.reflection import Inspector
+
+
+internal_logger = logging.getLogger("internal")
+user_logger = logging.getLogger("user")
 
 
 class PostgresSQLToJSONSchema(SQLToJSONSchema):
@@ -375,7 +380,7 @@ class PostgresLogBasedStream(SQLStream):
         try:
             message_payload = json.loads(message.payload)
         except json.JSONDecodeError:
-            self.logger.warning(
+            user_logger.warning(
                 "A message payload of %s could not be converted to JSON",
                 message.payload,
             )
@@ -399,12 +404,12 @@ class PostgresLogBasedStream(SQLStream):
             row.update({"_sdc_deleted_at": datetime.datetime.utcnow().strftime(r"%Y-%m-%dT%H:%M:%SZ")})
             row.update({"_sdc_lsn": message.data_start})
         elif message_payload["action"] in truncate_actions:
-            self.logger.debug(
+            internal_logger.debug(
                 ("A message payload of %s (corresponding to a truncate action) " "could not be processed."),
                 message.payload,
             )
         elif message_payload["action"] in transaction_actions:
-            self.logger.debug(
+            internal_logger.debug(
                 (
                     "A message payload of %s (corresponding to a transaction beginning "
                     "or commit) could not be processed."

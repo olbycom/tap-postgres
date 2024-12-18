@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import copy
 import io
+import logging
 import signal
 import sys
 from functools import cached_property
@@ -36,6 +37,10 @@ if TYPE_CHECKING:
 REPLICATION_SLOT_PATTERN = "^(?!pg_)[A-Za-z0-9_]{1,63}$"
 
 
+internal_logger = logging.getLogger("internal")
+user_logger = logging.getLogger("user")
+
+
 class TapPostgres(SQLTap):
     """Singer tap for Postgres."""
 
@@ -58,10 +63,7 @@ class TapPostgres(SQLTap):
             and self.config.get("port") is not None
             and self.config.get("user") is not None
             and self.config.get("password") is not None
-        ), (
-            "Need either the sqlalchemy_url to be set or host, port, user,"
-            + " and password to be set"
-        )
+        ), ("Need either the sqlalchemy_url to be set or host, port, user," + " and password to be set")
 
         # If log-based replication is used, sqlalchemy_url can't be used.
         assert (self.config.get("sqlalchemy_url") is None) or (
@@ -74,17 +76,12 @@ class TapPostgres(SQLTap):
         assert (
             (self.config.get("sqlalchemy_url") is not None)
             or (self.config.get("ssl_enable") is False)
-            or (
-                self.config.get("ssl_mode") in {"disable", "allow", "prefer", "require"}
-            )
+            or (self.config.get("ssl_mode") in {"disable", "allow", "prefer", "require"})
             or (
                 self.config.get("ssl_mode") in {"verify-ca", "verify-full"}
                 and self.config.get("ssl_certificate_authority") is not None
             )
-        ), (
-            "ssl_enable is true but invalid values are provided for ssl_mode and/or"
-            + "ssl_certificate_authority."
-        )
+        ), ("ssl_enable is true but invalid values are provided for ssl_mode and/or" + "ssl_certificate_authority.")
 
         # If sqlalchemy_url is not being used and ssl_client_certificate_enable is on,
         # the client must provide a certificate and associated private key.
@@ -117,10 +114,7 @@ class TapPostgres(SQLTap):
         th.Property(
             "host",
             th.StringType,
-            description=(
-                "Hostname for postgres instance. "
-                + "Note if sqlalchemy_url is set this will be ignored."
-            ),
+            description="Hostname for postgres instance. Note if sqlalchemy_url is set this will be ignored.",
         ),
         th.Property(
             "port",
@@ -134,44 +128,30 @@ class TapPostgres(SQLTap):
         th.Property(
             "user",
             th.StringType,
-            description=(
-                "User name used to authenticate. "
-                + "Note if sqlalchemy_url is set this will be ignored."
-            ),
+            description="User name used to authenticate. Note if sqlalchemy_url is set this will be ignored.",
         ),
         th.Property(
             "password",
             th.StringType,
             secret=True,
-            description=(
-                "Password used to authenticate. "
-                "Note if sqlalchemy_url is set this will be ignored."
-            ),
+            description="Password used to authenticate. Note if sqlalchemy_url is set this will be ignored.",
         ),
         th.Property(
             "database",
             th.StringType,
-            description=(
-                "Database name. "
-                + "Note if sqlalchemy_url is set this will be ignored."
-            ),
+            description="Database name. Note if sqlalchemy_url is set this will be ignored.",
         ),
         th.Property(
             "max_record_count",
             th.IntegerType,
             default=None,
-            description=(
-                "Optional. The maximum number of records to return in a "
-                "single stream."
-            ),
+            description="Optional. The maximum number of records to return in a single stream.",
         ),
         th.Property(
             "sqlalchemy_url",
             th.StringType,
             secret=True,
-            description=(
-                "Example postgresql://[username]:[password]@localhost:5432/[db_name]"
-            ),
+            description="Example postgresql://[username]:[password]@localhost:5432/[db_name]",
         ),
         th.Property(
             "filter_schemas",
@@ -195,9 +175,7 @@ class TapPostgres(SQLTap):
         th.Property(
             "json_as_object",
             th.BooleanType,
-            description=(
-                "Defaults to false, if true, json and jsonb fields will be Objects."
-            ),
+            description="Defaults to false, if true, json and jsonb fields will be Objects.",
             default=False,
         ),
         th.Property(
@@ -217,10 +195,7 @@ class TapPostgres(SQLTap):
                     "host",
                     th.StringType,
                     required=False,
-                    description=(
-                        "Host of the bastion server, this is the host "
-                        "we'll connect to via ssh"
-                    ),
+                    description="Host of the bastion server, this is the host we'll connect to via ssh",
                 ),
                 th.Property(
                     "username",
@@ -236,6 +211,13 @@ class TapPostgres(SQLTap):
                     description="Port to connect to bastion server",
                 ),
                 th.Property(
+                    "password",
+                    th.StringType,
+                    required=False,
+                    secret=True,
+                    description="Password for authentication to the bastion server",
+                ),
+                th.Property(
                     "private_key",
                     th.StringType,
                     required=False,
@@ -248,9 +230,7 @@ class TapPostgres(SQLTap):
                     required=False,
                     secret=True,
                     default=None,
-                    description=(
-                        "Private Key Password, leave None if no password is set"
-                    ),
+                    description="Private Key Password, leave None if no password is set",
                 ),
             ),
             required=False,
@@ -496,15 +476,24 @@ class TapPostgres(SQLTap):
         Returns:
             The new URL to connect to, using the tunnel.
         """
+        if ssh_config.get("password"):
+            credentials = {
+                "ssh_password": ssh_config.get("password"),
+            }
+        else:
+            credentials = {
+                "ssh_private_key": self.guess_key_type(ssh_config["private_key"]),
+                "ssh_private_key_password": ssh_config.get("private_key_password"),
+            }
+
         self.ssh_tunnel: SSHTunnelForwarder = SSHTunnelForwarder(
             ssh_address_or_host=(ssh_config["host"], ssh_config["port"]),
             ssh_username=ssh_config["username"],
-            ssh_private_key=self.guess_key_type(ssh_config["private_key"]),
-            ssh_private_key_password=ssh_config.get("private_key_password"),
             remote_bind_address=(url.host, url.port),
+            **credentials,
         )
         self.ssh_tunnel.start()
-        self.logger.info("SSH Tunnel started")
+        internal_logger.info("SSH Tunnel started")
         # On program exit clean up, want to also catch signals
         atexit.register(self.clean_up)
         signal.signal(signal.SIGTERM, self.catch_signal)
@@ -519,7 +508,7 @@ class TapPostgres(SQLTap):
 
     def clean_up(self) -> None:
         """Stop the SSH Tunnel."""
-        self.logger.info("Shutting down SSH Tunnel")
+        internal_logger.info("Shutting down SSH Tunnel")
         self.ssh_tunnel.stop()
 
     def catch_signal(self, signum, frame) -> None:
@@ -566,10 +555,7 @@ class TapPostgres(SQLTap):
         for stream in super().catalog.streams:
             stream_modified = False
             new_stream = copy.deepcopy(stream)
-            if (
-                new_stream.replication_method == "LOG_BASED"
-                and new_stream.schema.properties
-            ):
+            if new_stream.replication_method == "LOG_BASED" and new_stream.schema.properties:
                 for property in new_stream.schema.properties.values():
                     if "null" not in property.type:
                         if isinstance(property.type, list):
@@ -581,33 +567,21 @@ class TapPostgres(SQLTap):
                     new_stream.schema.required = None
                 if "_sdc_deleted_at" not in new_stream.schema.properties:
                     stream_modified = True
-                    new_stream.schema.properties.update(
-                        {"_sdc_deleted_at": Schema(type=["string", "null"])}
-                    )
+                    new_stream.schema.properties.update({"_sdc_deleted_at": Schema(type=["string", "null"])})
                     new_stream.metadata.update(
-                        {
-                            ("properties", "_sdc_deleted_at"): Metadata(
-                                Metadata.InclusionType.AVAILABLE, True, None
-                            )
-                        }
+                        {("properties", "_sdc_deleted_at"): Metadata(Metadata.InclusionType.AVAILABLE, True, None)}
                     )
                 if "_sdc_lsn" not in new_stream.schema.properties:
                     stream_modified = True
-                    new_stream.schema.properties.update(
-                        {"_sdc_lsn": Schema(type=["integer", "null"])}
-                    )
+                    new_stream.schema.properties.update({"_sdc_lsn": Schema(type=["integer", "null"])})
                     new_stream.metadata.update(
-                        {
-                            ("properties", "_sdc_lsn"): Metadata(
-                                Metadata.InclusionType.AVAILABLE, True, None
-                            )
-                        }
+                        {("properties", "_sdc_lsn"): Metadata(Metadata.InclusionType.AVAILABLE, True, None)}
                     )
             if stream_modified:
                 modified_streams.append(new_stream.tap_stream_id)
             new_catalog.add_stream(new_stream)
         if modified_streams:
-            self.logger.info(
+            internal_logger.info(
                 "One or more LOG_BASED catalog entries were modified "
                 f"({modified_streams=}) to allow nullability and include _sdc columns. "
                 "See README for further information."
@@ -620,16 +594,17 @@ class TapPostgres(SQLTap):
         Returns:
             List of discovered Stream objects.
         """
-        streams: list[SQLStream] = []
-        for catalog_entry in self.catalog_dict["streams"]:
-            if catalog_entry["replication_method"] == "LOG_BASED":
-                streams.append(
-                    PostgresLogBasedStream(
-                        self, catalog_entry, connector=self.connector
-                    )
-                )
-            else:
-                streams.append(
-                    PostgresStream(self, catalog_entry, connector=self.connector)
-                )
-        return streams
+        try:
+            streams: list[SQLStream] = []
+            for catalog_entry in self.catalog_dict["streams"]:
+                if catalog_entry["replication_method"] == "LOG_BASED":
+                    streams.append(PostgresLogBasedStream(self, catalog_entry, connector=self.connector))
+                else:
+                    streams.append(PostgresStream(self, catalog_entry, connector=self.connector))
+            return streams
+        except Exception as e:
+            internal_logger.error(
+                f"Error on discover: {e}",
+                exc_info=True,
+            )
+            raise
