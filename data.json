@@ -1,5 +1,7 @@
 {
   "name": "tap-postgres",
   "pip_url": "-e ./extract/tap-postgres",
-  "variant": "meltanolabs"
+  "variant": "meltanolabs",
+  "executable": "tap-postgres",
+  "namespace": "tap_postgres"
 }
