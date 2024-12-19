@@ -1,5 +1,5 @@
 {
   "name": "tap-postgres",
-  "pip_url": "-e ./extract/tap-postgres",
+  "pip_url": "git+https://github.com/olbycom/tap-postgres.git@feature/temp-release",
   "variant": "meltanolabs"
 }
